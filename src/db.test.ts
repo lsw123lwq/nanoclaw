@@ -171,7 +171,7 @@ describe('getMessagesSince', () => {
     // Simulate a message written before migration: has prefix but is_bot_message = 0
     store({
       id: 'm5', chat_jid: 'group@g.us', sender: 'Bot@s.whatsapp.net',
-      sender_name: 'Bot', content: 'Andy: old bot reply',
+      sender_name: 'Bot', content: '나스: old bot reply',
       timestamp: '2024-01-01T00:00:05.000Z',
     });
     const msgs = getMessagesSince('group@g.us', '2024-01-01T00:00:04.000Z', 'Andy');

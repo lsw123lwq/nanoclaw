@@ -202,7 +202,7 @@ describe('WhatsAppChannel', () => {
       // Group messages get prefixed when flushed
       expect(fakeSocket.sendMessage).toHaveBeenCalledWith(
         'test@g.us',
-        { text: 'Andy: Queued message' },
+        { text: '나스: Queued message' },
       );
     });
 
@@ -646,7 +646,7 @@ describe('WhatsAppChannel', () => {
 
       await channel.sendMessage('test@g.us', 'Hello');
       // Group messages get prefixed with assistant name
-      expect(fakeSocket.sendMessage).toHaveBeenCalledWith('test@g.us', { text: 'Andy: Hello' });
+      expect(fakeSocket.sendMessage).toHaveBeenCalledWith('test@g.us', { text: '나스: Hello' });
     });
 
     it('prefixes direct chat messages on shared number', async () => {
@@ -657,7 +657,7 @@ describe('WhatsAppChannel', () => {
 
       await channel.sendMessage('123@s.whatsapp.net', 'Hello');
       // Shared number: DMs also get prefixed (needed for self-chat distinction)
-      expect(fakeSocket.sendMessage).toHaveBeenCalledWith('123@s.whatsapp.net', { text: 'Andy: Hello' });
+      expect(fakeSocket.sendMessage).toHaveBeenCalledWith('123@s.whatsapp.net', { text: '나스: Hello' });
     });
 
     it('queues message when disconnected', async () => {
@@ -701,9 +701,9 @@ describe('WhatsAppChannel', () => {
 
       expect(fakeSocket.sendMessage).toHaveBeenCalledTimes(3);
       // Group messages get prefixed
-      expect(fakeSocket.sendMessage).toHaveBeenNthCalledWith(1, 'test@g.us', { text: 'Andy: First' });
-      expect(fakeSocket.sendMessage).toHaveBeenNthCalledWith(2, 'test@g.us', { text: 'Andy: Second' });
-      expect(fakeSocket.sendMessage).toHaveBeenNthCalledWith(3, 'test@g.us', { text: 'Andy: Third' });
+      expect(fakeSocket.sendMessage).toHaveBeenNthCalledWith(1, 'test@g.us', { text: '나스: First' });
+      expect(fakeSocket.sendMessage).toHaveBeenNthCalledWith(2, 'test@g.us', { text: '나스: Second' });
+      expect(fakeSocket.sendMessage).toHaveBeenNthCalledWith(3, 'test@g.us', { text: '나스: Third' });
     });
   });
 

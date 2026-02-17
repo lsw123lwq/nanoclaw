@@ -185,7 +185,7 @@ A personal Claude assistant accessible via WhatsApp, with minimal custom code.
 These are the creator's settings, stored here for reference:
 
 - **Trigger**: `@Andy` (case insensitive)
-- **Response prefix**: `Andy:`
+- **Response prefix**: `나스:`
 - **Persona**: Default Claude (no custom personality)
 - **Main channel**: Self-chat (messaging yourself in WhatsApp)
 
