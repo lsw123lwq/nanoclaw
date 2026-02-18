@@ -8,6 +8,8 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   SCHEDULER_POLL_INTERVAL,
+  SO2K_API_KEY,
+  SO2K_API_URL,
   TIMEZONE,
 } from './config.js';
 import { ContainerOutput, runContainerAgent, writeTasksSnapshot } from './container-runner.js';
@@ -21,6 +23,31 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
+
+async function saveIssueToSo2k(content: string): Promise<void> {
+  if (!SO2K_API_URL || !SO2K_API_KEY) {
+    logger.debug('SO2K_API_URL or SO2K_API_KEY not configured, skipping issue save');
+    return;
+  }
+  try {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const response = await fetch(`${SO2K_API_URL}/issues`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': SO2K_API_KEY,
+      },
+      body: JSON.stringify({ date: today, content }),
+    });
+    if (response.ok) {
+      logger.info('Issue saved to So2k successfully');
+    } else {
+      logger.warn({ status: response.status }, 'Failed to save issue to So2k');
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Error saving issue to So2k');
+  }
+}
 
 export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
@@ -147,6 +174,11 @@ async function runTask(
   }
 
   const durationMs = Date.now() - startTime;
+
+  // So2k에 이슈 저장 (성공 시, 결과가 있을 때만)
+  if (!error && result) {
+    await saveIssueToSo2k(result);
+  }
 
   logTaskRun({
     task_id: task.id,
