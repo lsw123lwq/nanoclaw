@@ -30,14 +30,13 @@ async function saveIssueToSo2k(content: string): Promise<void> {
     return;
   }
   try {
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const response = await fetch(`${SO2K_API_URL}/issues`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': SO2K_API_KEY,
       },
-      body: JSON.stringify({ date: today, content }),
+      body: JSON.stringify({ content }),
     });
     if (response.ok) {
       logger.info('Issue saved to So2k successfully');
