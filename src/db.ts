@@ -3,7 +3,14 @@ import fs from 'fs';
 import path from 'path';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
-import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
+import { isValidGroupFolder } from './group-folder.js';
+import { logger } from './logger.js';
+import {
+  NewMessage,
+  RegisteredGroup,
+  ScheduledTask,
+  TaskRunLog,
+} from './types.js';
 
 let db: Database.Database;
 
@@ -12,7 +19,9 @@ function createSchema(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS chats (
       jid TEXT PRIMARY KEY,
       name TEXT,
-      last_message_time TEXT
+      last_message_time TEXT,
+      channel TEXT,
+      is_group INTEGER DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT,
@@ -90,11 +99,32 @@ function createSchema(database: Database.Database): void {
       `ALTER TABLE messages ADD COLUMN is_bot_message INTEGER DEFAULT 0`,
     );
     // Backfill: mark existing bot messages that used the content prefix pattern
-    database.prepare(
-      `UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`,
-    ).run(`${ASSISTANT_NAME}:%`);
+    database
+      .prepare(`UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`)
+      .run(`${ASSISTANT_NAME}:%`);
   } catch {
     /* column already exists */
+  }
+
+  // Add channel and is_group columns if they don't exist (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
+    database.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
+    // Backfill from JID patterns
+    database.exec(
+      `UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`,
+    );
+    database.exec(
+      `UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`,
+    );
+    database.exec(
+      `UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`,
+    );
+    database.exec(
+      `UPDATE chats SET channel = 'telegram', is_group = 1 WHERE jid LIKE 'tg:%'`,
+    );
+  } catch {
+    /* columns already exist */
   }
 }
 
@@ -123,26 +153,35 @@ export function storeChatMetadata(
   chatJid: string,
   timestamp: string,
   name?: string,
+  channel?: string,
+  isGroup?: boolean,
 ): void {
+  const ch = channel ?? null;
+  const group = isGroup === undefined ? null : isGroup ? 1 : 0;
+
   if (name) {
     // Update with name, preserving existing timestamp if newer
     db.prepare(
       `
-      INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
+      INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(jid) DO UPDATE SET
         name = excluded.name,
-        last_message_time = MAX(last_message_time, excluded.last_message_time)
+        last_message_time = MAX(last_message_time, excluded.last_message_time),
+        channel = COALESCE(excluded.channel, channel),
+        is_group = COALESCE(excluded.is_group, is_group)
     `,
-    ).run(chatJid, name, timestamp);
+    ).run(chatJid, name, timestamp, ch, group);
   } else {
     // Update timestamp only, preserve existing name if any
     db.prepare(
       `
-      INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
+      INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(jid) DO UPDATE SET
-        last_message_time = MAX(last_message_time, excluded.last_message_time)
+        last_message_time = MAX(last_message_time, excluded.last_message_time),
+        channel = COALESCE(excluded.channel, channel),
+        is_group = COALESCE(excluded.is_group, is_group)
     `,
-    ).run(chatJid, chatJid, timestamp);
+    ).run(chatJid, chatJid, timestamp, ch, group);
   }
 }
 
@@ -164,6 +203,8 @@ export interface ChatInfo {
   jid: string;
   name: string;
   last_message_time: string;
+  channel: string;
+  is_group: number;
 }
 
 /**
@@ -173,7 +214,7 @@ export function getAllChats(): ChatInfo[] {
   return db
     .prepare(
       `
-    SELECT jid, name, last_message_time
+    SELECT jid, name, last_message_time, channel, is_group
     FROM chats
     ORDER BY last_message_time DESC
   `,
@@ -263,6 +304,7 @@ export function getNewMessages(
     FROM messages
     WHERE timestamp > ? AND chat_jid IN (${placeholders})
       AND is_bot_message = 0 AND content NOT LIKE ?
+      AND content != '' AND content IS NOT NULL
     ORDER BY timestamp
   `;
 
@@ -290,6 +332,7 @@ export function getMessagesSince(
     FROM messages
     WHERE chat_jid = ? AND timestamp > ?
       AND is_bot_message = 0 AND content NOT LIKE ?
+      AND content != '' AND content IS NOT NULL
     ORDER BY timestamp
   `;
   return db
@@ -490,6 +533,13 @@ export function getRegisteredGroup(
       }
     | undefined;
   if (!row) return undefined;
+  if (!isValidGroupFolder(row.folder)) {
+    logger.warn(
+      { jid: row.jid, folder: row.folder },
+      'Skipping registered group with invalid folder',
+    );
+    return undefined;
+  }
   return {
     jid: row.jid,
     name: row.name,
@@ -499,14 +549,15 @@ export function getRegisteredGroup(
     containerConfig: row.container_config
       ? JSON.parse(row.container_config)
       : undefined,
-    requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+    requiresTrigger:
+      row.requires_trigger === null ? undefined : row.requires_trigger === 1,
   };
 }
 
-export function setRegisteredGroup(
-  jid: string,
-  group: RegisteredGroup,
-): void {
+export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
+  if (!isValidGroupFolder(group.folder)) {
+    throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
+  }
   db.prepare(
     `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -522,9 +573,7 @@ export function setRegisteredGroup(
 }
 
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
-  const rows = db
-    .prepare('SELECT * FROM registered_groups')
-    .all() as Array<{
+  const rows = db.prepare('SELECT * FROM registered_groups').all() as Array<{
     jid: string;
     name: string;
     folder: string;
@@ -535,6 +584,13 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
   }>;
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
+    if (!isValidGroupFolder(row.folder)) {
+      logger.warn(
+        { jid: row.jid, folder: row.folder },
+        'Skipping registered group with invalid folder',
+      );
+      continue;
+    }
     result[row.jid] = {
       name: row.name,
       folder: row.folder,
@@ -543,7 +599,8 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       containerConfig: row.container_config
         ? JSON.parse(row.container_config)
         : undefined,
-      requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+      requiresTrigger:
+        row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     };
   }
   return result;
@@ -599,7 +656,14 @@ function migrateJsonState(): void {
   > | null;
   if (groups) {
     for (const [jid, group] of Object.entries(groups)) {
-      setRegisteredGroup(jid, group);
+      try {
+        setRegisteredGroup(jid, group);
+      } catch (err) {
+        logger.warn(
+          { jid, folder: group.folder, err },
+          'Skipping migrated registered group with invalid folder',
+        );
+      }
     }
   }
 }

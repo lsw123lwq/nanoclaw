@@ -6,7 +6,7 @@ import { EventEmitter } from 'events';
 // Mock config
 vi.mock('../config.js', () => ({
   STORE_DIR: '/tmp/nanoclaw-test-store',
-  ASSISTANT_NAME: 'Andy',
+  ASSISTANT_NAME: '나스',
   ASSISTANT_HAS_OWN_NUMBER: false,
 }));
 
@@ -84,6 +84,9 @@ vi.mock('@whiskeysockets/baileys', () => {
       timedOut: 408,
       restartRequired: 515,
     },
+    fetchLatestWaWebVersion: vi
+      .fn()
+      .mockResolvedValue({ version: [2, 3000, 0] }),
     makeCacheableSignalKeyStore: vi.fn((keys: unknown) => keys),
     useMultiFileAuthState: vi.fn().mockResolvedValue({
       state: {
@@ -100,7 +103,9 @@ import { getLastGroupSync, updateChatName, setLastGroupSync } from '../db.js';
 
 // --- Test helpers ---
 
-function createTestOpts(overrides?: Partial<WhatsAppChannelOpts>): WhatsAppChannelOpts {
+function createTestOpts(
+  overrides?: Partial<WhatsAppChannelOpts>,
+): WhatsAppChannelOpts {
   return {
     onMessage: vi.fn(),
     onChatMetadata: vi.fn(),
@@ -108,7 +113,7 @@ function createTestOpts(overrides?: Partial<WhatsAppChannelOpts>): WhatsAppChann
       'registered@g.us': {
         name: 'Test Group',
         folder: 'test-group',
-        trigger: '@Andy',
+        trigger: '@나스',
         added_at: '2024-01-01T00:00:00.000Z',
       },
     })),
@@ -158,6 +163,35 @@ describe('WhatsAppChannel', () => {
     triggerConnection('open');
     return p;
   }
+
+  // --- Version fetch ---
+
+  describe('version fetch', () => {
+    it('connects with fetched version', async () => {
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+      await connectChannel(channel);
+
+      const { fetchLatestWaWebVersion } =
+        await import('@whiskeysockets/baileys');
+      expect(fetchLatestWaWebVersion).toHaveBeenCalledWith({});
+    });
+
+    it('falls back gracefully when version fetch fails', async () => {
+      const { fetchLatestWaWebVersion } =
+        await import('@whiskeysockets/baileys');
+      vi.mocked(fetchLatestWaWebVersion).mockRejectedValueOnce(
+        new Error('network error'),
+      );
+
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+      await connectChannel(channel);
+
+      // Should still connect successfully despite fetch failure
+      expect(channel.isConnected()).toBe(true);
+    });
+  });
 
   // --- Connection lifecycle ---
 
@@ -223,7 +257,9 @@ describe('WhatsAppChannel', () => {
   describe('authentication', () => {
     it('exits process when QR code is emitted (no auth state)', async () => {
       vi.useFakeTimers();
-      const mockExit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      const mockExit = vi
+        .spyOn(process, 'exit')
+        .mockImplementation(() => undefined as never);
 
       const opts = createTestOpts();
       const channel = new WhatsAppChannel(opts);
@@ -265,7 +301,9 @@ describe('WhatsAppChannel', () => {
     });
 
     it('exits on loggedOut disconnect', async () => {
-      const mockExit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      const mockExit = vi
+        .spyOn(process, 'exit')
+        .mockImplementation(() => undefined as never);
 
       const opts = createTestOpts();
       const channel = new WhatsAppChannel(opts);
@@ -311,7 +349,7 @@ describe('WhatsAppChannel', () => {
             participant: '5551234@s.whatsapp.net',
             fromMe: false,
           },
-          message: { conversation: 'Hello Andy' },
+          message: { conversation: 'Hello 나스' },
           pushName: 'Alice',
           messageTimestamp: Math.floor(Date.now() / 1000),
         },
@@ -320,12 +358,15 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'registered@g.us',
         expect.any(String),
+        undefined,
+        'whatsapp',
+        true,
       );
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
         expect.objectContaining({
           id: 'msg-1',
-          content: 'Hello Andy',
+          content: 'Hello 나스',
           sender_name: 'Alice',
           is_from_me: false,
         }),
@@ -355,6 +396,9 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'unregistered@g.us',
         expect.any(String),
+        undefined,
+        'whatsapp',
+        true,
       );
       expect(opts.onMessage).not.toHaveBeenCalled();
     });
@@ -445,7 +489,10 @@ describe('WhatsAppChannel', () => {
             fromMe: false,
           },
           message: {
-            imageMessage: { caption: 'Check this photo', mimetype: 'image/jpeg' },
+            imageMessage: {
+              caption: 'Check this photo',
+              mimetype: 'image/jpeg',
+            },
           },
           pushName: 'Diana',
           messageTimestamp: Math.floor(Date.now() / 1000),
@@ -508,11 +555,8 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
-      // Still delivered but with empty content
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'registered@g.us',
-        expect.objectContaining({ content: '' }),
-      );
+      // Skipped — no text content to process
+      expect(opts.onMessage).not.toHaveBeenCalled();
     });
 
     it('uses sender JID when pushName is absent', async () => {
@@ -551,7 +595,7 @@ describe('WhatsAppChannel', () => {
           '1234567890@s.whatsapp.net': {
             name: 'Self Chat',
             folder: 'self-chat',
-            trigger: '@Andy',
+            trigger: '@나스',
             added_at: '2024-01-01T00:00:00.000Z',
           },
         })),
@@ -579,6 +623,9 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         '1234567890@s.whatsapp.net',
         expect.any(String),
+        undefined,
+        'whatsapp',
+        false,
       );
     });
 
@@ -605,6 +652,9 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'registered@g.us',
         expect.any(String),
+        undefined,
+        'whatsapp',
+        true,
       );
     });
 
@@ -631,6 +681,9 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         '0000000000@lid',
         expect.any(String),
+        undefined,
+        'whatsapp',
+        false,
       );
     });
   });
@@ -836,7 +889,10 @@ describe('WhatsAppChannel', () => {
       await connectChannel(channel);
 
       await channel.setTyping('test@g.us', true);
-      expect(fakeSocket.sendPresenceUpdate).toHaveBeenCalledWith('composing', 'test@g.us');
+      expect(fakeSocket.sendPresenceUpdate).toHaveBeenCalledWith(
+        'composing',
+        'test@g.us',
+      );
     });
 
     it('sends paused presence when stopping', async () => {
@@ -846,7 +902,10 @@ describe('WhatsAppChannel', () => {
       await connectChannel(channel);
 
       await channel.setTyping('test@g.us', false);
-      expect(fakeSocket.sendPresenceUpdate).toHaveBeenCalledWith('paused', 'test@g.us');
+      expect(fakeSocket.sendPresenceUpdate).toHaveBeenCalledWith(
+        'paused',
+        'test@g.us',
+      );
     });
 
     it('handles typing indicator failure gracefully', async () => {
@@ -858,7 +917,9 @@ describe('WhatsAppChannel', () => {
       fakeSocket.sendPresenceUpdate.mockRejectedValueOnce(new Error('Failed'));
 
       // Should not throw
-      await expect(channel.setTyping('test@g.us', true)).resolves.toBeUndefined();
+      await expect(
+        channel.setTyping('test@g.us', true),
+      ).resolves.toBeUndefined();
     });
   });
 
