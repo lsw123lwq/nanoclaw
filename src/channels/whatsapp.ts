@@ -36,6 +36,9 @@ export class WhatsAppChannel implements Channel {
   private outgoingQueue: Array<{ jid: string; text: string }> = [];
   private flushing = false;
   private groupSyncTimerStarted = false;
+  private intentionalDisconnect = false;  // SIGTERM/disconnect 시 재연결 방지
+  private reconnectDelay = 1000;          // 지수 백오프 초기값 (ms)
+  private static readonly MAX_RECONNECT_DELAY = 30000; // 최대 30초
 
   private opts: WhatsAppChannelOpts;
 
@@ -84,21 +87,28 @@ export class WhatsAppChannel implements Channel {
         const shouldReconnect = reason !== DisconnectReason.loggedOut;
         logger.info({ reason, shouldReconnect, queuedMessages: this.outgoingQueue.length }, 'Connection closed');
 
-        if (shouldReconnect) {
-          logger.info('Reconnecting...');
-          this.connectInternal().catch((err) => {
-            logger.error({ err }, 'Failed to reconnect, retrying in 5s');
-            setTimeout(() => {
-              this.connectInternal().catch((err2) => {
-                logger.error({ err: err2 }, 'Reconnection retry failed');
-              });
-            }, 5000);
-          });
-        } else {
+        if (!shouldReconnect) {
           logger.info('Logged out. Run /setup to re-authenticate.');
           process.exit(0);
+        } else if (this.intentionalDisconnect) {
+          logger.info('Intentional disconnect, skipping reconnect');
+        } else {
+          // 지수 백오프: 1s → 2s → 4s → ... → 30s
+          const delay = this.reconnectDelay;
+          this.reconnectDelay = Math.min(
+            this.reconnectDelay * 2,
+            WhatsAppChannel.MAX_RECONNECT_DELAY,
+          );
+          logger.info({ delayMs: delay }, 'Reconnecting...');
+          setTimeout(() => {
+            if (this.intentionalDisconnect) return;
+            this.connectInternal().catch((err) => {
+              logger.error({ err }, 'Failed to reconnect');
+            });
+          }, delay);
         }
       } else if (connection === 'open') {
+        this.reconnectDelay = 1000; // 성공 시 백오프 초기화
         this.connected = true;
         logger.info('Connected to WhatsApp');
 
@@ -229,6 +239,7 @@ export class WhatsAppChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
+    this.intentionalDisconnect = true;
     this.connected = false;
     this.sock?.end(undefined);
   }

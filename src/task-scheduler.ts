@@ -24,19 +24,26 @@ import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
-async function saveIssueToSo2k(content: string): Promise<void> {
+async function saveSo2kContent(content: string): Promise<void> {
   if (!SO2K_API_URL || !SO2K_API_KEY) {
-    logger.debug('SO2K_API_URL or SO2K_API_KEY not configured, skipping issue save');
+    logger.debug('SO2K_API_URL or SO2K_API_KEY not configured, skipping So2k save');
     return;
   }
+
+  if (!content || content.trim() === '') {
+    logger.debug('Empty So2k content, skipping save');
+    return;
+  }
+
   try {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const response = await fetch(`${SO2K_API_URL}/issues`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': SO2K_API_KEY,
       },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ date: today, content: content }),
     });
     if (response.ok) {
       logger.info('Issue saved to So2k successfully');
@@ -109,6 +116,7 @@ async function runTask(
 
   let result: string | null = null;
   let error: string | null = null;
+  let so2kContent: string | null = null; // Collect so2k content from messages
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();
@@ -142,6 +150,11 @@ async function runTask(
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
+          // Extract so2k content from result before sending
+          const so2kMatch = streamedOutput.result.match(/<so2k>([\s\S]*?)<\/so2k>/);
+          if (so2kMatch) {
+            so2kContent = so2kMatch[1].trim();
+          }
           // Forward result to user (sendMessage handles formatting)
           await deps.sendMessage(task.chat_jid, streamedOutput.result);
           // Only reset idle timer on actual results, not session-update markers
@@ -174,9 +187,9 @@ async function runTask(
 
   const durationMs = Date.now() - startTime;
 
-  // So2k에 이슈 저장 (성공 시, 결과가 있을 때만)
-  if (!error && result) {
-    await saveIssueToSo2k(result);
+  // So2k에 이슈 저장 (성공 시, so2k 컨텐츠가 있을 때만)
+  if (!error && so2kContent) {
+    await saveSo2kContent(so2kContent);
   }
 
   logTaskRun({

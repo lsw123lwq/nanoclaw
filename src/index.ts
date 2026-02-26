@@ -50,7 +50,7 @@ let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
-let whatsapp: WhatsAppChannel;
+let whatsapp: WhatsAppChannel | undefined;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
@@ -460,13 +460,17 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  // Create WhatsApp channel
-  whatsapp = new WhatsAppChannel({
-    onMessage: (chatJid, msg) => storeMessage(msg),
-    onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
-    registeredGroups: () => registeredGroups,
-  });
-  channels.push(whatsapp);
+  // Create WhatsApp channel (only if auth credentials exist)
+  if (fs.existsSync('./store/auth/creds.json')) {
+    whatsapp = new WhatsAppChannel({
+      onMessage: (chatJid, msg) => storeMessage(msg),
+      onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
+      registeredGroups: () => registeredGroups,
+    });
+    channels.push(whatsapp);
+  } else {
+    logger.info('No WhatsApp credentials found, skipping WhatsApp channel');
+  }
 
   // Create LINE channel if configured
   const lineEnv = readEnvFile(['LINE_CHANNEL_SECRET', 'LINE_CHANNEL_ACCESS_TOKEN', 'LINE_WEBHOOK_PORT']);
@@ -502,7 +506,7 @@ async function main(): Promise<void> {
     sendMessage: (jid, text) => routeOutbound(channels, jid, text),
     registeredGroups: () => registeredGroups,
     registerGroup,
-    syncGroupMetadata: (force) => whatsapp.syncGroupMetadata(force),
+    syncGroupMetadata: (force) => whatsapp?.syncGroupMetadata(force) ?? Promise.resolve(),
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
   });

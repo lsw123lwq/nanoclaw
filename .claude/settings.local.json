@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "Bash(./.claude/skills/setup/scripts/01-check-environment.sh:*)",
+      "Bash(./.claude/skills/setup/scripts/02-install-deps.sh:*)",
+      "Bash(./.claude/skills/setup/scripts/03-setup-container.sh:*)",
+      "Bash(echo '{\"allowedRoots\":[{\"path\":\"/Users/kanas/Desktop\",\"readonly\":false}],\"blockedPatterns\":[],\"nonMainReadOnly\":true}' | ./.claude/skills/setup/scripts/07-configure-mounts.sh 2>&1)",
+      "Bash(launchctl list | grep nanoclaw 2>&1)"
     ]
   }
 }
