@@ -216,7 +216,7 @@ The task will run in that group's context with access to their files and memory.
 
 ## So2k 주식 매매 API
 
-So2k 백엔드를 통해 KIS 증권 계좌 매매를 실행할 수 있다. API 키와 URL은 `.env`에서 읽는다.
+So2k 백엔드를 통해 KIS 증권 계좌 매매를 실행할 수 있다. **단 2개의 엔드포인트만 사용한다.**
 
 ```bash
 # 인증 정보 로드
@@ -224,45 +224,82 @@ SO2K_URL=$(grep ^SO2K_API_URL /workspace/project/.env | cut -d= -f2)
 SO2K_KEY=$(grep ^SO2K_API_KEY /workspace/project/.env | cut -d= -f2)
 ```
 
-### 엔드포인트
+### 1. 포트폴리오 현황 조회
 
 ```bash
-# 현재가 조회
-curl -s -H "X-API-Key: $SO2K_KEY" "$SO2K_URL/trade/price?stockCode=005930"
-
-# 매수가능 조회 (price=0 이면 시장가 기준)
-curl -s -H "X-API-Key: $SO2K_KEY" "$SO2K_URL/trade/buyable?stockCode=005930&price=70000"
-
-# 미체결 주문 조회
-curl -s -H "X-API-Key: $SO2K_KEY" "$SO2K_URL/trade/pending"
-
-# 매수 주문 (지정가)
-curl -s -X POST -H "X-API-Key: $SO2K_KEY" -H "Content-Type: application/json" \
-  -d '{"stockCode":"005930","side":"BUY","orderType":"LIMIT","quantity":1,"price":70000}' \
-  "$SO2K_URL/trade/order"
-
-# 매도 주문 (시장가)
-curl -s -X POST -H "X-API-Key: $SO2K_KEY" -H "Content-Type: application/json" \
-  -d '{"stockCode":"005930","side":"SELL","orderType":"MARKET","quantity":1,"price":0}' \
-  "$SO2K_URL/trade/order"
-
-# 주문 취소 (orderNo, krxFwdgOrdOrgno는 미체결 조회에서 확인)
-curl -s -X POST -H "X-API-Key: $SO2K_KEY" -H "Content-Type: application/json" \
-  -d '{"originalOrderNo":"0000117057","krxFwdgOrdOrgno":"91252","cancelAll":true,"quantity":0}' \
-  "$SO2K_URL/trade/cancel"
+curl -s -H "X-API-Key: $SO2K_KEY" "$SO2K_URL/trade/overview"
 ```
 
-### 응답 주요 필드
+잔고·보유종목·미체결 주문을 **한 번에** 반환한다.
 
-| 엔드포인트 | 주요 필드 |
-|---|---|
-| `/trade/price` | `currentPrice`, `change`, `changeRate`, `highLimit`, `lowLimit` |
-| `/trade/buyable` | `buyableQty` (수량), `buyableCash` (현금) |
-| `/trade/pending` | `orderNo`, `krxFwdgOrdOrgno`, `stockName`, `side`, `remainQty`, `orderPrice` |
-| `/trade/order` | `orderNo`, `orderTime` |
-| `/trade/cancel` | `cancelOrderNo`, `orderTime` |
+```json
+{
+  "cash": 1500000,
+  "totalBuyAmt": 3200000,
+  "totalEvalAmt": 3450000,
+  "totalProfit": 250000,
+  "holdings": [
+    { "stockCode": "005930", "stockName": "삼성전자", "quantity": 5,
+      "avgPrice": 72000, "currentPrice": 74000, "profitLoss": 10000, "profitRate": 2.78 }
+  ],
+  "pending": [
+    { "orderNo": "...", "stockName": "카카오", "side": "매수", "remainQty": 2, "orderPrice": 55000 }
+  ]
+}
+```
+
+### 2. 매매 실행 (매수 / 매도 / 취소)
+
+```bash
+curl -s -X POST -H "X-API-Key: $SO2K_KEY" -H "Content-Type: application/json" \
+  -d '{...}' "$SO2K_URL/trade/execute"
+```
+
+백엔드가 **현재가 확인 → 잔고/보유수량 검증 → 주문 실행**을 처리한다.
+
+#### 매수
+
+```json
+{ "action": "BUY", "stockCode": "005930", "quantity": 1, "price": 0 }
+```
+
+- `price: 0` → 시장가, 숫자 입력 → 지정가
+- `maxPrice` 추가 시 현재가가 초과하면 주문 자동 거부 (예: `"maxPrice": 75000`)
+
+#### 매도
+
+```json
+{ "action": "SELL", "stockCode": "005930", "quantity": 1, "price": 0 }
+```
+
+#### 취소
+
+```json
+{ "action": "CANCEL", "stockCode": "005930", "quantity": 0, "price": 0 }
+```
+
+종목코드만 지정하면 해당 종목 미체결 주문을 **전량 자동 취소**한다.
+
+#### 실행 응답
+
+```json
+{
+  "executed": true,
+  "action": "BUY",
+  "stockCode": "005930",
+  "stockName": "삼성전자",
+  "quantity": 1,
+  "orderPrice": 73500,
+  "orderType": "시장가",
+  "orderNo": "0000117057",
+  "remainingCash": 926500
+}
+```
+
+오류 시: `{ "error": "메시지" }` (잔고 부족, maxPrice 초과, 미체결 없음 등)
 
 ### 주의사항
 
-- 실계좌에서 즉시 실행된다. 주문 전 반드시 `price`/`quantity`를 확인할 것
-- 취소 시 `orderNo`와 `krxFwdgOrdOrgno`는 `/trade/pending` 응답에서 가져와야 한다
+- 실계좌에서 즉시 실행된다
+- 매수 시 `maxPrice`를 지정해 가격 급등 방어 권장
+- 종목코드(6자리 숫자)를 정확히 사용할 것 (삼성전자=005930, 카카오=035720)
